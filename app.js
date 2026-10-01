@@ -30,25 +30,35 @@ function buildReverse(enc) {
   }
   return rev;
 }
-function digitsToNums(str) {
-  return str.replace(/\s+/g, "").split("").map((d) => d);
-}
-function encode(input, enc) {
+function encode(text, enc) {
   const sep = enc["_"];
-  const nums = digitsToNums(input);
-  const codes = [];
-  for (const n of nums) {
-    if (!/^[0-9]$/.test(n)) throw new Error(`Недопустимый символ "${n}", нужны только цифры`);
-    const code = enc[n];
-    if (code === undefined) throw new Error(`Цифра "${n}" отсутствует в кодировке "${enc.id}"`);
-    codes.push(code);
-  }
-  const encoded = codes.join(sep);
+  const line = enc["#"];
+  const lines = text.split(/\r?\n/);
+  const parts = [];
+  const allCodes = [];
+  lines.forEach((ln, li) => {
+    const lineParts = [];
+    for (const ch of ln) {
+      const num = state.ic[ch];
+      if (num === undefined) throw new Error(`Символ "${ch}" отсутствует в ic.json`);
+      const numCodes = [];
+      for (const d of String(num)) {
+        const code = enc[d];
+        if (code === undefined) throw new Error(`Цифра "${d}" отсутствует в кодировке "${enc.id}"`);
+        numCodes.push(code);
+        allCodes.push(code);
+      }
+      lineParts.push(numCodes.join(""));
+    }
+    parts.push(lineParts.join(sep));
+    if (li < lines.length - 1) parts.push(line);
+  });
+  const encoded = parts.join("");
   let key = "";
-  if (codes.length > 0) {
-    const first = codes[0];
-    const third = codes[2] !== undefined ? codes[2] : codes[codes.length - 1];
-    const last = codes[codes.length - 1];
+  if (allCodes.length > 0) {
+    const first = allCodes[0];
+    const third = allCodes[2] !== undefined ? allCodes[2] : allCodes[allCodes.length - 1];
+    const last = allCodes[allCodes.length - 1];
     key = first.slice(-1) + third.slice(-1) + last.slice(-1);
   }
   return { encoded, key };
@@ -56,27 +66,38 @@ function encode(input, enc) {
 function decode(bits, enc) {
   const rev = buildReverse(enc);
   const sep = enc["_"];
+  const line = enc["#"];
   const sample = Object.entries(enc).find(([k]) => k !== "id")[1];
   const LEN = sample.length;
   const chunks = [];
   for (let i = 0; i < bits.length; i += LEN) chunks.push(bits.slice(i, i + LEN));
   let out = "";
-  for (const c of chunks) {
-    if (c === sep) continue;
-    const n = rev[c];
-    if (n === undefined) throw new Error("Неизвестный код: " + c);
-    if (!/^[0-9]$/.test(n)) continue;
-    out += n;
+  let numBuf = "";
+  function flush() {
+    if (!numBuf) return;
+    const sym = state.revIC[numBuf];
+    if (sym === undefined) throw new Error("В ic.json нет номера " + numBuf);
+    out += sym;
+    numBuf = "";
   }
+  for (const c of chunks) {
+    if (c === sep) { flush(); continue; }
+    if (c === line) { flush(); out += "\n"; continue; }
+    const d = rev[c];
+    if (d === undefined) throw new Error("Неизвестный код: " + c);
+    numBuf += d;
+  }
+  flush();
   return out;
 }
 function keyFromBits(bits, enc) {
   const sep = enc["_"];
+  const line = enc["#"];
   const sample = Object.entries(enc).find(([k]) => k !== "id")[1];
   const LEN = sample.length;
   const chunks = [];
   for (let i = 0; i < bits.length; i += LEN) chunks.push(bits.slice(i, i + LEN));
-  const groups = chunks.filter((c) => c !== sep);
+  const groups = chunks.filter((c) => c !== sep && c !== line);
   let key = "";
   if (groups.length > 0) {
     const first = groups[0];
@@ -102,10 +123,11 @@ function download(filename, content) {
 }
 function render(root) {
   root.innerHTML = `
+    <style>cca{color:green;}ccb{color:red;}</style>
     <h3>CatCode</h3>
     <div><label>Тип кодировки: <select id="encSel"></select></label></div>
     <h4>Зашифровать</h4>
-    <textarea id="plain" rows="5" cols="50" placeholder="Число, например 234"></textarea><br>
+    <textarea id="plain" rows="5" cols="50" placeholder="Текст..."></textarea><br>
     <button id="btnEnc">Зашифровать → .catcode</button>
     <div id="encMsg"></div>
     <hr>
@@ -130,7 +152,7 @@ function render(root) {
   fill(root.querySelector("#encSel2"));
   root.querySelector("#btnEnc").onclick = async () => {
     const encId = root.querySelector("#encSel").value;
-    const text = root.querySelector("#plain").value.trim();
+    const text = root.querySelector("#plain").value;
     const msg = root.querySelector("#encMsg");
     msg.textContent = "";
     try {
@@ -138,9 +160,9 @@ function render(root) {
       const { encoded, key } = encode(text, enc);
       const fname = "catcode_" + randomId() + ".catcode";
       download(fname, encoded);
-      msg.innerHTML = "Файл: <b>" + fname + "</b><br>Ключ: <b>" + key + "</b>";
+      msg.innerHTML = "<cca>Файл: <b>" + fname + "</b><br>Ключ: <b>" + key + "</b></cca>";
     } catch (e) {
-      msg.textContent = "Ошибка: " + e.message;
+      msg.textContent = "<ccb>Ошибка: " + e.message + "</ccb>";
     }
   };
   root.querySelector("#btnDec").onclick = async () => {
@@ -151,23 +173,22 @@ function render(root) {
     const msg = root.querySelector("#decMsg");
     out.textContent = "";
     msg.textContent = "";
-    if (!fileEl.files[0]) { msg.textContent = "Выбери файл .catcode"; return; }
+    if (!fileEl.files[0]) { msg.textContent = "<ccb>Выбери файл .catcode</ccb>"; return; }
     try {
       const bits = (await fileEl.files[0].text()).trim();
       const enc = await loadEnc(encId);
       const { key: realKey } = keyFromBits(bits, enc);
       if (keyIn !== realKey) {
-        msg.textContent = 'Неверный ключ. Ожидался "' + realKey + '", введён "' + keyIn + '".';
+        msg.textContent = '<ccb>Неверный ключ.</ccb>';
         return;
       }
       out.textContent = decode(bits, enc);
-      msg.textContent = "OK";
+      msg.textContent = "<cca>OK</cca>";
     } catch (e) {
-      msg.textContent = "Ошибка: " + e.message;
+      msg.textContent = "<ccb>Ошибка: " + e.message + "</ccb>;
     }
   };
 }
-
 (async function main() {
   const root = document.getElementById("root");
   try {
@@ -175,7 +196,7 @@ function render(root) {
     state.revIC = buildRevIC(state.ic);
     state.ids = await loadV();
   } catch (e) {
-    root.textContent = "Ошибка загрузки: " + e.message;
+    root.textContent = "<ccb>Ошибка загрузки: " + e.message + "</ccb>;
     return;
   }
   render(root);
