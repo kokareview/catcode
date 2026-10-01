@@ -1,14 +1,17 @@
 const state = { ids: [], ic: null, revIC: null, encCache: {} };
+
 async function loadV() {
   const r = await fetch("v.json");
   if (!r.ok) throw new Error("Не найден v.json");
   return r.json();
 }
+
 async function loadIC() {
   const r = await fetch("ic.json");
   if (!r.ok) throw new Error("Не найден ic.json");
   return r.json();
 }
+
 async function loadEnc(id) {
   if (state.encCache[id]) return state.encCache[id];
   const r = await fetch(id + ".json");
@@ -17,11 +20,13 @@ async function loadEnc(id) {
   state.encCache[id] = j;
   return j;
 }
+
 function buildRevIC(ic) {
   const rev = {};
   for (const [sym, num] of Object.entries(ic)) rev[num] = sym;
   return rev;
 }
+
 function buildReverse(enc) {
   const rev = {};
   for (const [k, code] of Object.entries(enc)) {
@@ -30,12 +35,14 @@ function buildReverse(enc) {
   }
   return rev;
 }
+
 function encode(text, enc) {
   const sep = enc["_"];
   const line = enc["#"];
   const lines = text.split(/\r?\n/);
   const parts = [];
   const allCodes = [];
+
   lines.forEach((ln, li) => {
     const lineParts = [];
     for (const ch of ln) {
@@ -53,7 +60,9 @@ function encode(text, enc) {
     parts.push(lineParts.join(sep));
     if (li < lines.length - 1) parts.push(line);
   });
+
   const encoded = parts.join("");
+
   let key = "";
   if (allCodes.length > 0) {
     const first = allCodes[0];
@@ -61,18 +70,23 @@ function encode(text, enc) {
     const last = allCodes[allCodes.length - 1];
     key = first.slice(-1) + third.slice(-1) + last.slice(-1);
   }
+
   return { encoded, key };
 }
+
 function decode(bits, enc) {
   const rev = buildReverse(enc);
   const sep = enc["_"];
   const line = enc["#"];
   const sample = Object.entries(enc).find(([k]) => k !== "id")[1];
   const LEN = sample.length;
+
   const chunks = [];
   for (let i = 0; i < bits.length; i += LEN) chunks.push(bits.slice(i, i + LEN));
+
   let out = "";
   let numBuf = "";
+
   function flush() {
     if (!numBuf) return;
     const sym = state.revIC[numBuf];
@@ -80,6 +94,7 @@ function decode(bits, enc) {
     out += sym;
     numBuf = "";
   }
+
   for (const c of chunks) {
     if (c === sep) { flush(); continue; }
     if (c === line) { flush(); out += "\n"; continue; }
@@ -88,16 +103,21 @@ function decode(bits, enc) {
     numBuf += d;
   }
   flush();
+
   return out;
 }
+
 function keyFromBits(bits, enc) {
   const sep = enc["_"];
   const line = enc["#"];
   const sample = Object.entries(enc).find(([k]) => k !== "id")[1];
   const LEN = sample.length;
+
   const chunks = [];
   for (let i = 0; i < bits.length; i += LEN) chunks.push(bits.slice(i, i + LEN));
+
   const groups = chunks.filter((c) => c !== sep && c !== line);
+
   let key = "";
   if (groups.length > 0) {
     const first = groups[0];
@@ -107,12 +127,14 @@ function keyFromBits(bits, enc) {
   }
   return { key };
 }
+
 function randomId(len = 8) {
   const abc = "abcdefghijklmnopqrstuvwxyz0123456789";
   let s = "";
   for (let i = 0; i < len; i++) s += abc[Math.floor(Math.random() * abc.length)];
   return s;
 }
+
 function download(filename, content) {
   const blob = new Blob([content], { type: "text/plain" });
   const a = document.createElement("a");
@@ -121,9 +143,13 @@ function download(filename, content) {
   a.click();
   URL.revokeObjectURL(a.href);
 }
+
 function render(root) {
   root.innerHTML = `
-    <style>cca{color:green;}ccb{color:red;}</style>
+    <style>
+      .ok { color: green; }
+      .err { color: red; }
+    </style>
     <h3>CatCode</h3>
     <div><label>Тип кодировки: <select id="encSel"></select></label></div>
     <h4>Зашифровать</h4>
@@ -139,6 +165,7 @@ function render(root) {
     <pre id="decOut"></pre>
     <div id="decMsg"></div>
   `;
+
   const fill = (sel) => {
     sel.innerHTML = "";
     for (const id of state.ids) {
@@ -150,6 +177,7 @@ function render(root) {
   };
   fill(root.querySelector("#encSel"));
   fill(root.querySelector("#encSel2"));
+
   root.querySelector("#btnEnc").onclick = async () => {
     const encId = root.querySelector("#encSel").value;
     const text = root.querySelector("#plain").value;
@@ -160,11 +188,12 @@ function render(root) {
       const { encoded, key } = encode(text, enc);
       const fname = "catcode_" + randomId() + ".catcode";
       download(fname, encoded);
-      msg.innerHTML = "<cca>Файл: <b>" + fname + "</b><br>Ключ: <b>" + key + "</b></cca>";
+      msg.innerHTML = '<span class="ok">Файл: <b>' + fname + '</b><br>Ключ: <b>' + key + '</b></span>';
     } catch (e) {
-      msg.textContent = "<ccb>Ошибка: " + e.message + "</ccb>";
+      msg.innerHTML = '<span class="err">Ошибка: ' + e.message + '</span>';
     }
   };
+
   root.querySelector("#btnDec").onclick = async () => {
     const encId = root.querySelector("#encSel2").value;
     const keyIn = root.querySelector("#keyIn").value.trim();
@@ -173,22 +202,29 @@ function render(root) {
     const msg = root.querySelector("#decMsg");
     out.textContent = "";
     msg.textContent = "";
-    if (!fileEl.files[0]) { msg.textContent = "<ccb>Выбери файл .catcode</ccb>"; return; }
+
+    if (!fileEl.files[0]) {
+      msg.innerHTML = '<span class="err">Выбери файл .catcode</span>';
+      return;
+    }
+
     try {
       const bits = (await fileEl.files[0].text()).trim();
       const enc = await loadEnc(encId);
       const { key: realKey } = keyFromBits(bits, enc);
+
       if (keyIn !== realKey) {
-        msg.textContent = '<ccb>Неверный ключ.</ccb>';
+        msg.innerHTML = '<span class="err">Неверный ключ.</span>';
         return;
       }
       out.textContent = decode(bits, enc);
-      msg.textContent = "<cca>OK</cca>";
+      msg.innerHTML = '<span class="ok">OK</span>';
     } catch (e) {
-      msg.textContent = "<ccb>Ошибка: " + e.message + "</ccb>;
+      msg.innerHTML = '<span class="err">Ошибка: ' + e.message + '</span>';
     }
   };
 }
+
 (async function main() {
   const root = document.getElementById("root");
   try {
@@ -196,7 +232,7 @@ function render(root) {
     state.revIC = buildRevIC(state.ic);
     state.ids = await loadV();
   } catch (e) {
-    root.textContent = "<ccb>Ошибка загрузки: " + e.message + "</ccb>;
+    root.innerHTML = '<span class="err">Ошибка загрузки: ' + e.message + '</span>';
     return;
   }
   render(root);
