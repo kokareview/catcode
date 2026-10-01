@@ -1,6 +1,6 @@
 const state = { ids: [], ic: null, revIC: null, encCache: {} };
 async function loadV() {
-  const r = await fetch(`v.json`);
+  const r = await fetch("v.json");
   if (!r.ok) throw new Error("Не найден v.json");
   return r.json();
 }
@@ -11,7 +11,7 @@ async function loadIC() {
 }
 async function loadEnc(id) {
   if (state.encCache[id]) return state.encCache[id];
-  const r = await fetch(`${id}.json`);
+  const r = await fetch(id + ".json");
   if (!r.ok) throw new Error("Не найден " + id + ".json");
   const j = await r.json();
   state.encCache[id] = j;
@@ -30,31 +30,25 @@ function buildReverse(enc) {
   }
   return rev;
 }
-function encode(text, enc) {
+function digitsToNums(str) {
+  return str.replace(/\s+/g, "").split("").map((d) => d);
+}
+function encode(input, enc) {
   const sep = enc["_"];
-  const line = enc["#"];
-  const lines = text.split(/\r?\n/);
-  const groups = [];
-  const parts = [];
-  lines.forEach((ln, li) => {
-    const lineGroups = [];
-    for (const ch of ln) {
-      const num = state.ic[ch];
-      if (num === undefined) throw new Error(`Символ "${ch}" отсутствует в ic.json`);
-      const code = enc[String(num)];
-      if (code === undefined) throw new Error(`Номер ${num} (символ "${ch}") отсутствует в кодировке "${enc.id}"`);
-      lineGroups.push(code);
-      groups.push(code);
-    }
-    parts.push(lineGroups.join(sep));
-    if (li < lines.length - 1) parts.push(line);
-  });
-  const encoded = parts.join("");
+  const nums = digitsToNums(input);
+  const codes = [];
+  for (const n of nums) {
+    if (!/^[0-9]$/.test(n)) throw new Error(`Недопустимый символ "${n}", нужны только цифры`);
+    const code = enc[n];
+    if (code === undefined) throw new Error(`Цифра "${n}" отсутствует в кодировке "${enc.id}"`);
+    codes.push(code);
+  }
+  const encoded = codes.join(sep);
   let key = "";
-  if (groups.length > 0) {
-    const first = groups[0];
-    const third = groups[2] !== undefined ? groups[2] : groups[groups.length - 1];
-    const last = groups[groups.length - 1];
+  if (codes.length > 0) {
+    const first = codes[0];
+    const third = codes[2] !== undefined ? codes[2] : codes[codes.length - 1];
+    const last = codes[codes.length - 1];
     key = first.slice(-1) + third.slice(-1) + last.slice(-1);
   }
   return { encoded, key };
@@ -62,7 +56,6 @@ function encode(text, enc) {
 function decode(bits, enc) {
   const rev = buildReverse(enc);
   const sep = enc["_"];
-  const line = enc["#"];
   const sample = Object.entries(enc).find(([k]) => k !== "id")[1];
   const LEN = sample.length;
   const chunks = [];
@@ -70,23 +63,20 @@ function decode(bits, enc) {
   let out = "";
   for (const c of chunks) {
     if (c === sep) continue;
-    if (c === line) { out += "\n"; continue; }
-    const num = rev[c];
-    if (num === undefined) throw new Error("Неизвестный код: " + c);
-    const sym = state.revIC[num];
-    if (sym === undefined) throw new Error("В ic.json нет номера " + num);
-    out += sym;
+    const n = rev[c];
+    if (n === undefined) throw new Error("Неизвестный код: " + c);
+    if (!/^[0-9]$/.test(n)) continue;
+    out += n;
   }
   return out;
 }
 function keyFromBits(bits, enc) {
   const sep = enc["_"];
-  const line = enc["#"];
   const sample = Object.entries(enc).find(([k]) => k !== "id")[1];
   const LEN = sample.length;
   const chunks = [];
   for (let i = 0; i < bits.length; i += LEN) chunks.push(bits.slice(i, i + LEN));
-  const groups = chunks.filter((c) => c !== sep && c !== line);
+  const groups = chunks.filter((c) => c !== sep);
   let key = "";
   if (groups.length > 0) {
     const first = groups[0];
@@ -113,11 +103,9 @@ function download(filename, content) {
 function render(root) {
   root.innerHTML = `
     <h3>CatCode</h3>
-    <div>
-      <label>Тип кодировки: <select id="encSel"></select></label>
-    </div>
+    <div><label>Тип кодировки: <select id="encSel"></select></label></div>
     <h4>Зашифровать</h4>
-    <textarea id="plain" rows="5" cols="50" placeholder="Текст..."></textarea><br>
+    <textarea id="plain" rows="5" cols="50" placeholder="Число, например 234"></textarea><br>
     <button id="btnEnc">Зашифровать → .catcode</button>
     <div id="encMsg"></div>
     <hr>
@@ -142,15 +130,15 @@ function render(root) {
   fill(root.querySelector("#encSel2"));
   root.querySelector("#btnEnc").onclick = async () => {
     const encId = root.querySelector("#encSel").value;
-    const text = root.querySelector("#plain").value;
+    const text = root.querySelector("#plain").value.trim();
     const msg = root.querySelector("#encMsg");
     msg.textContent = "";
     try {
       const enc = await loadEnc(encId);
       const { encoded, key } = encode(text, enc);
-      const fname = `catcode_${randomId()}.catcode`;
+      const fname = "catcode_" + randomId() + ".catcode";
       download(fname, encoded);
-      msg.innerHTML = `Файл: <b>${fname}</b><br>Ключ: <b>${key}</b>`;
+      msg.innerHTML = "Файл: <b>" + fname + "</b><br>Ключ: <b>" + key + "</b>";
     } catch (e) {
       msg.textContent = "Ошибка: " + e.message;
     }
@@ -169,7 +157,7 @@ function render(root) {
       const enc = await loadEnc(encId);
       const { key: realKey } = keyFromBits(bits, enc);
       if (keyIn !== realKey) {
-        msg.textContent = `Неверный ключ. Ожидался "${realKey}", введён "${keyIn}".`;
+        msg.textContent = 'Неверный ключ. Ожидался "' + realKey + '", введён "' + keyIn + '".';
         return;
       }
       out.textContent = decode(bits, enc);
@@ -179,6 +167,7 @@ function render(root) {
     }
   };
 }
+
 (async function main() {
   const root = document.getElementById("root");
   try {
